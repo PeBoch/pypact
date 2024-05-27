@@ -44,8 +44,8 @@ class PlotAdapter(object):
     def grid(self, show=True):
         self.engine.grid(show)
 
-    def addlegend(self, location):
-        self.engine.legend(loc=location)
+    def addlegend(self, location, legendfontsize: int):
+        self.engine.legend(loc=location, prop={'size': legendfontsize})
 
     def newcanvas(self, *args, **kwargs):
         self._figure = self.engine.figure(*args, **kwargs)

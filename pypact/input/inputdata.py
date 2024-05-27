@@ -44,6 +44,15 @@ class FuelInventory(InventoryType):
             strrep += f"\n{i[0]} {i[1]:.{self._prec}E}"
         return strrep   
 
+@freeze_it
+class SSFFuelInventory(InventoryType):
+    def __str__(self):
+        strrep = f"SSFFUEL {len(self.entries)}"
+        for i in self.entries:
+            strrep += f"\n{i[0]} {i[1]:.{self._prec}E}"
+        return strrep  
+
+
 
 @freeze_it
 class InputData(JSONSerializable):
@@ -75,6 +84,19 @@ class InputData(JSONSerializable):
         self._usecumfissyield       = False
         self._clearancedata         = False
         self._loglevel              = LOG_SEVERITY_WARNING
+        self._probtable             = False
+        self._SSFchoose             = False
+        self._SSFnuclides           = []
+        self._FYactinides           = []
+        self._FYactinidesoptions    = -2
+        self._SSFfuel               = False
+        self._usefission            = False
+        self._fisyield              = False
+        self._tolerance             = False
+        self._itol                  = 0    # default (inventory not pathway)
+        self._atol                  = 1E4  # default
+        self._rtol                  = 2E-3 # default
+        self._tab1                  = False
         
         # default is 1.0E-12 barns
         self._xsthreshold           = 1.0e-12
@@ -92,10 +114,15 @@ class InputData(JSONSerializable):
         
         self._inventorymass        = MassInventory(precision=precision)
         self._inventoryfuel        = FuelInventory(precision=precision)
+        self._inventoryssffuel     = SSFFuelInventory(precision=precision)
     
         # irradiation schedule
         # a list of tuples of (time interval in seconds, flux amplitude)
         self._irradschedule = []
+
+        # power schedule
+        # a list of tuples of (time interval in seconds, power amplitude)
+        self._powerschedule = []
         
         # cooling schedule
         # a list of time interval in seconds
@@ -201,6 +228,41 @@ class InputData(JSONSerializable):
     
     def resetIrradiation(self):
         self._irradschedule = []
+
+    def addPower(self, timeInSecs, powerAmp):
+        self._powerschedule.append((timeInSecs, powerAmp))
+    
+    def resetPower(self):
+        self._powerschedule = []
+
+    def includeProbtable(self):
+        self._probtable = True
+
+    def includeSSFchoose(self, *SSFnuclides):
+        self._SSFchoose = True
+        for x in SSFnuclides:
+            self._SSFnuclides.append(x)
+    
+    def includeSSFfuel(self):
+        self._SSFfuel = True
+
+    def includeFisyield(self, option, *FYActinides):
+        self._fisyield = True
+        self._FYactinidesoptions = option
+        for x in FYActinides:
+            self._FYactinides.append(x)
+
+    def includeUsefission(self):
+        self._usefission = True
+
+    def includeTolerance(self, itol, atol, rtol):
+        self._tolerance = True
+        self._itol = itol
+        self._atol = atol
+        self._rtol = rtol
+    
+    def includeTab1(self):
+        self._tab1 = True
     
     def addCooling(self, timeInSecs):
         self._coolingschedule.append(timeInSecs)
@@ -258,6 +320,22 @@ class InputData(JSONSerializable):
 
     def clearIsotopes(self):
         self._inventoryfuel.entries = []
+        
+    def addSSFIsotope(self, isotope: str, numberOfAtoms):
+        """
+            Add an SSF isotope
+            SSF isotope: character symbol of element name, e.g. 'Fe' and the mass number of the isotpe e.g '56'
+            numberOfAtoms: the number of atoms present 
+        """
+        if numberOfAtoms < 0:
+            raise PypactUnphysicalValueException("Number of atoms must be positive")
+        #could check for integer value and raise here PypactTypeException
+        
+        self._inventoryssffuel.entries.append((isotope, numberOfAtoms))
+
+    def clearIsotopes(self):
+        self._inventoryssffuel.entries = []
+
 
     def addElement(self, element, percentage = 100.0):
         """
@@ -350,7 +428,20 @@ class InputData(JSONSerializable):
         if self._projectile != PROJECTILE_NEUTRON:
             addcomment("set projectile (n=1, d=2, p=3, a=4, g=5)")
             addkeyword('PROJ', args=[self._projectile])
+
+        if self._probtable:
+            addcomment("energy self-shielding default")
+            addkeyword('PROBTABLE', args=[0,1])
+
+        if self._SSFchoose:
+            addcomment("nuclides for energy self-shielding")
+            addkeyword('SSFCHOOSE', args=[len(self._SSFnuclides), 1])
+            addkeyword(" ".join([str(a) for a in self._SSFnuclides]))
         
+        if self._SSFfuel:
+            addcomment("ssf nuclides concentrations from previous run")
+            addkeyword(str(self._inventoryssffuel))
+
         # end control phase
         addcomment("end control")
         addkeyword('FISPACT')
@@ -388,6 +479,22 @@ class InputData(JSONSerializable):
         if self._atomsthreshold > 0.0:
             addcomment("set the threshold for atoms in the inventory")
             addkeyword('MIND', args=[self._atomsthreshold])
+
+        if self._usefission:
+            addcomment("use fission")
+            addkeyword('USEFISSION')
+        
+        if self._fisyield:
+            addcomment("isotopes for fission yield")
+            addkeyword('FISYIELD', args=[self._FYactinidesoptions, " ".join([str(a) for a in self._FYactinides])])
+
+        if self._tolerance:
+            addcomment("tolerance settings itol, atol , rtol")
+            addkeyword('TOLERANCE', args=[self._itol, self._atol, self._rtol])
+
+        if self._tab1:
+            addcomment('natoms output for next run')
+            addkeyword('TAB1', args=[21])
         
         if self._initialinventory:
             addcomment("output the initial inventory")
@@ -410,6 +517,21 @@ class InputData(JSONSerializable):
                 addkeyword('TIME', args=[f"{time:.{self._prec}E}", 'SECS'])
                 addkeyword('ATOMS')
             addcomment("end of cooling")
+
+        if len(self._powerschedule) > 0:
+            addcomment("power schedule")
+            for time, poweramp in self._powerschedule:
+                addkeyword('POWER', args=[f"{poweramp:.{self._prec}E} 1 301"])
+                addkeyword('TIME', args=[f"{time:.{self._prec}E}", 'SECS'])
+                addkeyword('ATOMS')
+            addcomment("end of power")
+
+            addkeyword('FLUX', args=[0.0])
+            addkeyword('ZERO')
+            for time in self._coolingschedule:
+                addkeyword('TIME', args=[f"{time:.{self._prec}E}", 'SECS'])
+                addkeyword('ATOMS')
+            addcomment("end of cooling")            
 
         # end file
         addnewline()

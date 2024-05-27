@@ -75,6 +75,6 @@ def plotproperty(output,
     if timeperiod == TimeZone.BOTH:
         plotter.custom('axvline', x=output[-1].irradiation_time,
                       color='k', linestyle='--', label='cooling')
-    plotter.addlegend(location='lower right')
+    plotter.addlegend(location='lower right', legendfontsize=6)
 
     return f
